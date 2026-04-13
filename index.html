@@ -747,9 +747,17 @@ async function playAudioQueue() {
   const bytes  = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-  const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-  const buf  = await ctx.decodeAudioData(bytes.buffer);
-  const src  = ctx.createBufferSource();
+  // Reuse the capture AudioContext for playback so Chrome's autoplay policy
+  // doesn't suspend a freshly-created context mid-session.
+  // Fall back to a new context if capture context is closed/unavailable.
+  const ctx = (audioCtx && audioCtx.state !== 'closed')
+    ? audioCtx
+    : new (window.AudioContext || window.webkitAudioContext)();
+
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  const buf = await ctx.decodeAudioData(bytes.buffer);
+  const src = ctx.createBufferSource();
   src.buffer = buf;
   src.connect(ctx.destination);
   src.start(0);
