@@ -159,16 +159,15 @@ async function startDeepgramStream(session) {
   const dgLang = DEEPGRAM_LANG[session.speakerLang] || session.speakerLang;
 
   const conn = deepgram.listen.live({
-    model:               'nova-3',
-    language:            dgLang,
-    smart_format:        true,
-    punctuate:           true,
-    utterance_end_ms:    1200,        // VAD: fire UtteranceEnd after 1.2s silence
-    vad_events:          true,
-    interim_results:     true,
-    encoding:            'linear16',
-    sample_rate:         16000,
-    channels:            1,
+    model:            'nova-3',
+    language:         dgLang,
+    smart_format:     true,
+    punctuate:        true,
+    utterance_end_ms: 1200,        // VAD: fire UtteranceEnd after 1.2s silence
+    vad_events:       true,
+    interim_results:  true,
+    // No encoding/sample_rate — browser sends audio/webm;codecs=opus,
+    // Deepgram auto-detects from the container header
   });
 
   conn.on(LiveTranscriptionEvents.Open, () => {
