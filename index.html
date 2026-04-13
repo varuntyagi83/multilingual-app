@@ -510,7 +510,8 @@ main {
 <script>
 // ─── State ────────────────────────────────────────────────────────────────────
 let ws           = null;
-let audioCtx     = null;   // shared AudioContext for capture + waveform
+let audioCtx     = null;   // 16kHz AudioContext for mic capture + waveform
+let playbackCtx  = null;   // system-rate AudioContext for TTS playback
 let micStream    = null;   // raw MediaStream (for track cleanup)
 let micProcessor = null;   // ScriptProcessor for PCM capture
 let analyser     = null;
@@ -545,9 +546,13 @@ async function connect() {
       audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
     });
 
-    // Shared AudioContext for PCM capture + waveform (16 kHz to match Deepgram config)
-    micStream = stream;
-    audioCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    // 16kHz AudioContext for mic capture + waveform (matches Deepgram linear16 config)
+    micStream   = stream;
+    audioCtx    = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    // Separate playback context at system default rate (44.1kHz).
+    // ElevenLabs MP3 is 44.1kHz — playing it through the 16kHz capture
+    // context would run it at 2.75x speed and make it inaudible.
+    playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     // Capture raw linear16 PCM via ScriptProcessor and stream to server.
     // MediaRecorder sends fragmented WebM — only the first chunk has the
@@ -636,6 +641,10 @@ function stopRecording() {
   if (audioCtx && audioCtx.state !== 'closed') {
     audioCtx.close();
     audioCtx = null;
+  }
+  if (playbackCtx && playbackCtx.state !== 'closed') {
+    playbackCtx.close();
+    playbackCtx = null;
   }
 }
 
@@ -747,20 +756,24 @@ async function playAudioQueue() {
   const bytes  = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-  // Reuse the capture AudioContext for playback so Chrome's autoplay policy
-  // doesn't suspend a freshly-created context mid-session.
-  // Fall back to a new context if capture context is closed/unavailable.
-  const ctx = (audioCtx && audioCtx.state !== 'closed')
-    ? audioCtx
+  // Use the dedicated playback context (system default sample rate ~44.1kHz).
+  // The capture audioCtx runs at 16kHz — using it for 44.1kHz MP3 would play
+  // audio at 2.75x speed, making it inaudible.
+  const ctx = (playbackCtx && playbackCtx.state !== 'closed')
+    ? playbackCtx
     : new (window.AudioContext || window.webkitAudioContext)();
 
   if (ctx.state === 'suspended') await ctx.resume();
 
-  const buf = await ctx.decodeAudioData(bytes.buffer);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(ctx.destination);
-  src.start(0);
+  try {
+    const buf = await ctx.decodeAudioData(bytes.buffer);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch (e) {
+    console.error('[playback] decodeAudioData failed:', e);
+  }
 }
 
 // ─── Fallback TTS via browser speechSynthesis ─────────────────────────────────

@@ -35,7 +35,7 @@ const PORT = process.env.PORT || 3000;
 // ElevenLabs voice IDs tuned for LATAM
 // Replace with your own cloned/licensed voices if needed
 const ELEVENLABS_VOICES = {
-  'es-419': process.env.EL_VOICE_ES || 'cgSgspJ2msm6clMCkdW9', // Jessica (turbo v2.5 speaks Spanish)
+  'es-419': process.env.EL_VOICE_ES || 'imFXYz8XIletRKLZZQaA', // Spanish voice
   'pt-BR':  process.env.EL_VOICE_PT || 'FGY2WhTYpPnrIDTdsKH5', // Laura   (turbo v2.5 speaks Portuguese)
   'en-US':  process.env.EL_VOICE_EN || 'EXAVITQu4vr4xnSDxMaL', // Sarah
 };
