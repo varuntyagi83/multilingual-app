@@ -708,12 +708,16 @@ function handleServerMessage(msg) {
       break;
 
     case 'tts_chunk':
-      // Accumulate base64 audio chunks
       audioQueue.push(msg.audio);
       break;
 
     case 'tts_end':
       playAudioQueue();
+      break;
+
+    case 'tts_fallback':
+      // ElevenLabs unavailable — use browser speechSynthesis
+      speakFallback(msg.text, msg.lang);
       break;
 
     case 'swapped':
@@ -749,6 +753,17 @@ async function playAudioQueue() {
   src.buffer = buf;
   src.connect(ctx.destination);
   src.start(0);
+}
+
+// ─── Fallback TTS via browser speechSynthesis ─────────────────────────────────
+function speakFallback(text, lang) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel(); // stop any in-progress speech
+  const utt  = new SpeechSynthesisUtterance(text);
+  utt.lang   = lang || 'es-419';
+  utt.rate   = 0.95;
+  utt.pitch  = 1;
+  window.speechSynthesis.speak(utt);
 }
 
 // ─── Waveform ──────────────────────────────────────────────────────────────────

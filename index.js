@@ -348,8 +348,13 @@ JSON format:
       targetLang:   session.targetLang,
     });
 
-    // Stream TTS audio from ElevenLabs
-    await streamTTS(session, translation, session.targetLang);
+    // Stream TTS audio from ElevenLabs; fall back to client-side speechSynthesis on failure
+    try {
+      await streamTTS(session, translation, session.targetLang);
+    } catch (ttsErr) {
+      console.warn(`[tts:${session.id}] ElevenLabs failed (${ttsErr.message}), sending fallback`);
+      send(session.ws, { type: 'tts_fallback', text: translation, lang: session.targetLang });
+    }
 
   } catch (err) {
     console.error(`[translate:${session.id}]`, err.message);
