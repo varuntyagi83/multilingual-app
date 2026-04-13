@@ -2,11 +2,11 @@
   "name": "voice-agent-latam",
   "version": "1.0.0",
   "description": "Autonomous bilingual voice translation agent for South America — Deepgram + Claude + ElevenLabs",
-  "main": "server/index.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node index.js",
     "dev": "nodemon server/index.js",
-    "test": "node server/test-pipeline.js"
+    "test": "node test-pipeline.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

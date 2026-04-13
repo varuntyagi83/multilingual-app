@@ -56,7 +56,7 @@ const DEEPGRAM_LANG = {
 const app    = express();
 const server = http.createServer(app);
 
-app.use(express.static(path.join(__dirname, '../client')));
+app.use(express.static(__dirname));
 app.use(express.json());
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));
