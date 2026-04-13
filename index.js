@@ -13,6 +13,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk');
 const Anthropic     = require('@anthropic-ai/sdk');
 const fetch         = require('node-fetch');
+const session       = require('express-session');
 const path          = require('path');
 const { v4: uuidv4 } = require('uuid');
 
@@ -58,10 +59,83 @@ const DEEPGRAM_LANG = {
 const app    = express();
 const server = http.createServer(app);
 
-app.use(express.static(__dirname));
+// ─── Session ──────────────────────────────────────────────────────────────────
+const sessionMiddleware = session({
+  secret:            process.env.SESSION_SECRET || (() => { console.warn('[auth] SESSION_SECRET not set — using insecure default'); return 'insecure-default'; })(),
+  resave:            false,
+  saveUninitialized: false,
+  cookie:            { httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 },
+});
+app.use(sessionMiddleware);
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+// ─── Public routes ────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));
+
+app.get('/login', (req, res) => {
+  if (req.session.authenticated) return res.redirect('/');
+  const error = req.query.error === '1';
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Voice Agent — Login</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0a0a0a;color:#e8e8e8;font-family:'IBM Plex Mono',ui-monospace,monospace;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .card{background:#141414;border:1px solid #252525;border-radius:12px;padding:2.5rem;width:100%;max-width:360px}
+    h1{font-size:18px;font-weight:600;margin-bottom:.25rem}
+    p{font-size:12px;color:#555;margin-bottom:2rem}
+    label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#666;display:block;margin-bottom:.4rem}
+    input[type=password]{width:100%;background:#0a0a0a;border:1px solid #252525;border-radius:8px;padding:.65rem .9rem;color:#e8e8e8;font-family:inherit;font-size:14px;outline:none;transition:border-color .15s}
+    input[type=password]:focus{border-color:#444}
+    button{margin-top:1.25rem;width:100%;background:#e8e8e8;color:#0a0a0a;border:none;border-radius:8px;padding:.7rem;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s}
+    button:hover{background:#d0d0d0}
+    .error{margin-top:1rem;font-size:12px;color:#f87171;text-align:center}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Voice Agent</h1>
+    <p>Enter the passphrase to continue</p>
+    <form method="POST" action="/login">
+      <label>Passphrase</label>
+      <input type="password" name="password" autofocus placeholder="••••••••">
+      <button type="submit">Continue →</button>
+      ${error ? '<div class="error">Incorrect passphrase — try again</div>' : ''}
+    </form>
+  </div>
+</body>
+</html>`);
+});
+
+app.post('/login', (req, res) => {
+  const pass = process.env.APP_PASSWORD;
+  if (!pass) {
+    console.error('[auth] APP_PASSWORD env var is not set');
+    return res.status(500).send('Server misconfiguration: APP_PASSWORD not set');
+  }
+  if (req.body.password === pass) {
+    req.session.authenticated = true;
+    return res.redirect('/');
+  }
+  res.redirect('/login?error=1');
+});
+
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/login'));
+});
+
+// ─── Auth guard (everything below is protected) ───────────────────────────────
+app.use((req, res, next) => {
+  if (req.session.authenticated) return next();
+  res.redirect('/login');
+});
+
+// ─── Protected routes ─────────────────────────────────────────────────────────
+app.use(express.static(__dirname));
 
 app.get('/voices', (_req, res) => res.json(ELEVENLABS_VOICES));
 
@@ -82,7 +156,20 @@ app.get('/api/test-deepgram', async (_req, res) => {
 });
 
 // ─── WebSocket server ─────────────────────────────────────────────────────────
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+
+// Protect WebSocket upgrades — check session before handing off to wss
+server.on('upgrade', (req, socket, head) => {
+  if (req.url !== '/ws') { socket.destroy(); return; }
+  sessionMiddleware(req, {}, () => {
+    if (!req.session?.authenticated) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+});
 
 // Active sessions map: sessionId -> { deepgramConn, speakerLang, targetLang, history }
 const sessions = new Map();
