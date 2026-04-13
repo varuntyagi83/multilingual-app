@@ -515,8 +515,7 @@ let micStream    = null;   // raw MediaStream (for track cleanup)
 let micProcessor = null;   // ScriptProcessor for PCM capture
 let analyser     = null;
 let waveAnimId   = null;
-let audioQueue    = [];
-let isPlayingAudio = false;
+let audioChunks   = [];
 let sessionId     = null;
 let connected     = false;
 
@@ -540,11 +539,6 @@ connectBtn.addEventListener('click', () => {
 
 async function connect() {
   try {
-    // Unlock AudioContext on the user gesture so TTS playback is allowed later
-    const unlockCtx = new (window.AudioContext || window.webkitAudioContext)();
-    await unlockCtx.resume();
-    unlockCtx.close();
-
     // Request mic access
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
@@ -709,17 +703,28 @@ function handleServerMessage(msg) {
     }
 
     case 'tts_start':
-      audioQueue = [];
+      audioChunks = [];
       break;
 
     case 'tts_chunk':
-      audioQueue.push(msg.audio);
+      audioChunks.push(msg.audio);
       break;
 
-    case 'tts_end':
-      console.log('TTS end - queue length: ' + audioQueue.length);
-      playAudioQueue();
+    case 'tts_end': {
+      if (audioChunks.length) {
+        const binary = audioChunks.map(b64 => atob(b64)).join('');
+        const bytes  = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob   = new Blob([bytes], { type: 'audio/mpeg' });
+        const url    = URL.createObjectURL(blob);
+        const audio  = new Audio(url);
+        audio.onended = () => URL.revokeObjectURL(url);
+        audio.onerror = (e) => console.error('Audio playback error:', e);
+        audio.play().catch(e => console.error('Play failed:', e));
+      }
+      audioChunks = [];
       break;
+    }
 
     case 'tts_fallback':
       // ElevenLabs unavailable — use browser speechSynthesis
@@ -742,33 +747,6 @@ function handleServerMessage(msg) {
 }
 
 // ─── Audio playback ────────────────────────────────────────────────────────────
-async function playAudioQueue() {
-  if (!audioQueue.length) return;
-
-  // Combine all base64 chunks into one buffer
-  const combined = audioQueue.join('');
-  audioQueue = [];
-
-  const binary = atob(combined);
-  const bytes  = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-  try {
-    // Fresh AudioContext at system default rate (44.1kHz) — NOT the 16kHz capture
-    // context, which would play ElevenLabs MP3 at 2.75x speed and be inaudible.
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    await ctx.resume();
-    const buf = await ctx.decodeAudioData(bytes.buffer);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start(0);
-    src.onended = () => ctx.close();
-  } catch (err) {
-    console.error('TTS playback error:', err);
-  }
-}
-
 // ─── Fallback TTS via browser speechSynthesis ─────────────────────────────────
 function speakFallback(text, lang) {
   if (!window.speechSynthesis) return;
