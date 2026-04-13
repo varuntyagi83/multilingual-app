@@ -104,10 +104,12 @@ wss.on('connection', (ws) => {
   // Send session ID to client
   send(ws, { type: 'session', sessionId });
 
-  ws.on('message', async (data) => {
+  ws.on('message', async (data, isBinary) => {
     try {
-      // Binary = raw audio PCM from mic
-      if (data instanceof Buffer || data instanceof ArrayBuffer) {
+      // Binary = raw audio WebM/Opus from mic
+      // NOTE: in the ws library all messages arrive as Buffer, so we use
+      // the isBinary flag — not instanceof checks — to tell them apart.
+      if (isBinary) {
         if (session.deepgramConn && session.deepgramConn.getReadyState() === 1) {
           session.deepgramConn.send(data);
         }
