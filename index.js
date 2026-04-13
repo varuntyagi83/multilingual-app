@@ -99,6 +99,7 @@ wss.on('connection', (ws) => {
     targetLang:  'en-US',
     history: [],          // conversation history for Claude context
     isStreaming: false,
+    mode: 'translate',    // 'translate' | 'converse'
     utteranceBuffer: '',
   };
   sessions.set(sessionId, session);
@@ -127,7 +128,8 @@ wss.on('connection', (ws) => {
           // Client sends language pair before starting
           session.speakerLang = msg.speakerLang || 'es-419';
           session.targetLang  = msg.targetLang  || 'en-US';
-          console.log(`[session:${sessionId}] config → ${session.speakerLang} ➔ ${session.targetLang}`);
+          session.mode        = msg.mode        || 'translate';
+          console.log(`[session:${sessionId}] config → ${session.speakerLang} ➔ ${session.targetLang} [${session.mode}]`);
           await startDeepgramStream(session);
           send(ws, { type: 'ready', message: 'Deepgram stream open. Listening...' });
           break;
@@ -300,7 +302,11 @@ async function translateAndSpeak(session, text) {
     const speakerName = LANG_DISPLAY[session.speakerLang] || session.speakerLang;
     const targetName  = LANG_DISPLAY[session.targetLang]  || session.targetLang;
 
-    const userPrompt = `Translate the following from ${speakerName} to ${targetName}. Return ONLY valid JSON, no markdown.
+    const isConverse = session.mode === 'converse';
+
+    const userPrompt = isConverse
+      ? `The user said in ${speakerName}: "${text}"\n\nRespond naturally and helpfully in ${targetName}. Return ONLY valid JSON:\n{"reply": "your response in ${targetName}"}`
+      : `Translate the following from ${speakerName} to ${targetName}. Return ONLY valid JSON, no markdown.
 
 Source (${speakerName}): "${text}"
 
@@ -312,6 +318,10 @@ JSON format:
   "cultural_note": "optional brief note if idiom/cultural context changes meaning, else empty string"
 }`;
 
+    const systemPrompt = isConverse
+      ? buildConversationSystemPrompt(session.speakerLang, session.targetLang)
+      : buildSystemPrompt(session.speakerLang, session.targetLang);
+
     const claudeMessages = [
       ...historyMessages,
       { role: 'user', content: userPrompt },
@@ -320,7 +330,7 @@ JSON format:
     const claudeResp = await anthropic.messages.create({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 512,
-      system:     buildSystemPrompt(session.speakerLang, session.targetLang),
+      system:     systemPrompt,
       messages:   claudeMessages,
     });
 
@@ -332,7 +342,7 @@ JSON format:
       parsed = { translation: rawJson, register: 'neutral', cultural_note: '', back_translation: '' };
     }
 
-    const translation  = parsed.translation   || '';
+    const translation  = isConverse ? (parsed.reply || '') : (parsed.translation || '');
     const culturalNote = parsed.cultural_note || '';
 
     // Update conversation history
@@ -348,6 +358,7 @@ JSON format:
       culturalNote,
       speakerLang:  session.speakerLang,
       targetLang:   session.targetLang,
+      isReply:      isConverse,
     });
 
     // Stream TTS audio from ElevenLabs; fall back to client-side speechSynthesis on failure
@@ -458,6 +469,17 @@ Core rules:
 - Flag idioms or cultural references that don't translate directly
 - Never add unsolicited commentary outside the JSON structure
 - Respond ONLY with valid JSON, no preamble, no markdown fences`;
+}
+
+function buildConversationSystemPrompt(speakerLang, targetLang) {
+  const speaker = LANG_DISPLAY[speakerLang] || speakerLang;
+  const target  = LANG_DISPLAY[targetLang]  || targetLang;
+
+  return `You are a helpful conversational AI assistant.
+The user is speaking in ${speaker}. You MUST reply ONLY in ${target}.
+Keep responses natural, concise, and conversational (1-3 sentences max).
+- Respond ONLY with valid JSON, no preamble, no markdown fences
+- JSON format: {"reply": "your response in ${target}"}`;
 }
 
 // ─── Start ─────────────────────────────────────────────────────────────────────

@@ -442,6 +442,14 @@ main {
     </div>
 
     <div class="sidebar-section">
+      <div class="section-title">Mode</div>
+      <select class="lang-select" id="mode-select">
+        <option value="translate">Translate — render speech in target language</option>
+        <option value="converse">Converse — AI responds in target language</option>
+      </select>
+    </div>
+
+    <div class="sidebar-section">
       <div class="section-title">Live audio input</div>
       <div class="waveform-wrap" id="waveform">
         <div style="color: var(--muted); font-size:12px;">Connect to see waveform</div>
@@ -584,6 +592,7 @@ async function connect() {
         type:        'config',
         speakerLang: document.getElementById('lang-a').value,
         targetLang:  document.getElementById('lang-b').value,
+        mode:        document.getElementById('mode-select').value,
       }));
     };
 
@@ -685,11 +694,13 @@ function handleServerMessage(msg) {
       addMessage({
         speaker:     'a',
         langLabel:   LANG_DISPLAY[msg.speakerLang] || msg.speakerLang,
+        targetLabel: LANG_DISPLAY[msg.targetLang]  || msg.targetLang,
         text:        msg.original,
         translation: msg.translation,
         register:    msg.register,
         culturalNote: msg.culturalNote,
         latencyMs:   latency,
+        isReply:     msg.isReply,
       });
 
       transcript.push({
@@ -815,20 +826,26 @@ function addSystemMsg(text, isError) {
   convStream.scrollTop = convStream.scrollHeight;
 }
 
-function addMessage({ speaker, langLabel, text, translation, register, culturalNote, latencyMs }) {
+function addMessage({ speaker, langLabel, targetLabel, text, translation, register, culturalNote, latencyMs, isReply }) {
   const div = document.createElement('div');
   div.className = `msg speaker-${speaker}`;
 
   const latStr = latencyMs ? `${latencyMs}ms` : '';
-  const regBadge = register ? `<span class="register-badge">${register}</span>` : '';
+  const regBadge = (!isReply && register) ? `<span class="register-badge">${register}</span>` : '';
+
+  const translationHtml = isReply && translation
+    ? `<div class="msg-translation" style="font-style:normal;font-weight:500;font-size:15px;color:var(--fg);margin-top:6px">${escHtml(targetLabel || '')}: ${escHtml(translation)}</div>`
+    : translation
+      ? `<div class="msg-translation">→ ${escHtml(translation)}</div>`
+      : '';
 
   div.innerHTML = `
     <div class="msg-meta">
       <div class="dot"></div>
       ${escHtml(langLabel)} ${latStr ? `· <span style="color:var(--muted)">${latStr}</span>` : ''} ${regBadge}
     </div>
-    <div class="msg-bubble">${escHtml(text)}</div>
-    ${translation ? `<div class="msg-translation">→ ${escHtml(translation)}</div>` : ''}
+    <div class="msg-bubble"${isReply ? ' style="color:var(--muted);font-size:13px"' : ''}>${escHtml(text)}</div>
+    ${translationHtml}
     ${culturalNote ? `<div class="cultural-note">💡 ${escHtml(culturalNote)}</div>` : ''}
   `;
   convStream.appendChild(div);
