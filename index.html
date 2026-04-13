@@ -511,7 +511,6 @@ main {
 // ─── State ────────────────────────────────────────────────────────────────────
 let ws           = null;
 let audioCtx     = null;   // 16kHz AudioContext for mic capture + waveform
-let playbackCtx  = null;   // system-rate AudioContext for TTS playback
 let micStream    = null;   // raw MediaStream (for track cleanup)
 let micProcessor = null;   // ScriptProcessor for PCM capture
 let analyser     = null;
@@ -541,18 +540,19 @@ connectBtn.addEventListener('click', () => {
 
 async function connect() {
   try {
+    // Unlock AudioContext on the user gesture so TTS playback is allowed later
+    const unlockCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await unlockCtx.resume();
+    unlockCtx.close();
+
     // Request mic access
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
     });
 
     // 16kHz AudioContext for mic capture + waveform (matches Deepgram linear16 config)
-    micStream   = stream;
-    audioCtx    = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    // Separate playback context at system default rate (44.1kHz).
-    // ElevenLabs MP3 is 44.1kHz — playing it through the 16kHz capture
-    // context would run it at 2.75x speed and make it inaudible.
-    playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
+    micStream = stream;
+    audioCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
 
     // Capture raw linear16 PCM via ScriptProcessor and stream to server.
     // MediaRecorder sends fragmented WebM — only the first chunk has the
@@ -642,10 +642,6 @@ function stopRecording() {
     audioCtx.close();
     audioCtx = null;
   }
-  if (playbackCtx && playbackCtx.state !== 'closed') {
-    playbackCtx.close();
-    playbackCtx = null;
-  }
 }
 
 // ─── Server message handler ────────────────────────────────────────────────────
@@ -721,6 +717,7 @@ function handleServerMessage(msg) {
       break;
 
     case 'tts_end':
+      console.log('TTS end - queue length: ' + audioQueue.length);
       playAudioQueue();
       break;
 
@@ -756,23 +753,19 @@ async function playAudioQueue() {
   const bytes  = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-  // Use the dedicated playback context (system default sample rate ~44.1kHz).
-  // The capture audioCtx runs at 16kHz — using it for 44.1kHz MP3 would play
-  // audio at 2.75x speed, making it inaudible.
-  const ctx = (playbackCtx && playbackCtx.state !== 'closed')
-    ? playbackCtx
-    : new (window.AudioContext || window.webkitAudioContext)();
-
-  if (ctx.state === 'suspended') await ctx.resume();
-
   try {
+    // Fresh AudioContext at system default rate (44.1kHz) — NOT the 16kHz capture
+    // context, which would play ElevenLabs MP3 at 2.75x speed and be inaudible.
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
     const buf = await ctx.decodeAudioData(bytes.buffer);
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.connect(ctx.destination);
     src.start(0);
-  } catch (e) {
-    console.error('[playback] decodeAudioData failed:', e);
+    src.onended = () => ctx.close();
+  } catch (err) {
+    console.error('TTS playback error:', err);
   }
 }
 
