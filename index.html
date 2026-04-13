@@ -509,11 +509,12 @@ main {
 
 <script>
 // ─── State ────────────────────────────────────────────────────────────────────
-let ws            = null;
-let mediaRecorder = null;
-let audioCtx      = null;
-let analyser      = null;
-let waveAnimId    = null;
+let ws           = null;
+let audioCtx     = null;   // shared AudioContext for capture + waveform
+let micStream    = null;   // raw MediaStream (for track cleanup)
+let micProcessor = null;   // ScriptProcessor for PCM capture
+let analyser     = null;
+let waveAnimId   = null;
 let audioQueue    = [];
 let isPlayingAudio = false;
 let sessionId     = null;
@@ -544,8 +545,31 @@ async function connect() {
       audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
     });
 
-    // Setup waveform visualizer
-    setupWaveform(stream);
+    // Shared AudioContext for PCM capture + waveform (16 kHz to match Deepgram config)
+    micStream = stream;
+    audioCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+
+    // Capture raw linear16 PCM via ScriptProcessor and stream to server.
+    // MediaRecorder sends fragmented WebM — only the first chunk has the
+    // container header, so Deepgram can't decode subsequent chunks.
+    // Raw PCM bypasses that issue entirely.
+    const micSource = audioCtx.createMediaStreamSource(stream);
+    micProcessor    = audioCtx.createScriptProcessor(4096, 1, 1);
+    micProcessor.onaudioprocess = (e) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const float32 = e.inputBuffer.getChannelData(0);
+        const int16   = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+        }
+        ws.send(int16.buffer);
+      }
+    };
+    micSource.connect(micProcessor);
+    micProcessor.connect(audioCtx.destination);
+
+    // Waveform reuses the same AudioContext
+    setupWaveform(stream, audioCtx);
 
     // Open WebSocket to server
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -579,15 +603,6 @@ async function connect() {
       cancelAnimationFrame(waveAnimId);
     };
 
-    // Stream mic audio to server via MediaRecorder
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
-        e.data.arrayBuffer().then(buf => ws.send(buf));
-      }
-    };
-    mediaRecorder.start(100); // 100ms chunks
-
     connected = true;
     connectBtn.textContent = 'Disconnect';
     connectBtn.classList.add('connected');
@@ -610,9 +625,17 @@ function disconnect() {
 }
 
 function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  if (micProcessor) {
+    try { micProcessor.disconnect(); } catch (_) {}
+    micProcessor = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+  if (audioCtx && audioCtx.state !== 'closed') {
+    audioCtx.close();
+    audioCtx = null;
   }
 }
 
@@ -729,11 +752,10 @@ async function playAudioQueue() {
 }
 
 // ─── Waveform ──────────────────────────────────────────────────────────────────
-function setupWaveform(stream) {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const source = audioCtx.createMediaStreamSource(stream);
-  analyser = audioCtx.createAnalyser();
+function setupWaveform(stream, ctx) {
+  analyser = ctx.createAnalyser();
   analyser.fftSize = 64;
+  const source = ctx.createMediaStreamSource(stream);
   source.connect(analyser);
 
   waveformEl.innerHTML = '';

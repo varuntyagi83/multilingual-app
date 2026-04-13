@@ -185,8 +185,9 @@ async function startDeepgramStream(session) {
     utterance_end_ms: 1200,        // VAD: fire UtteranceEnd after 1.2s silence
     vad_events:       true,
     interim_results:  true,
-    // No encoding/sample_rate — browser sends audio/webm;codecs=opus,
-    // Deepgram auto-detects from the container header
+    encoding:         'linear16',  // raw PCM from browser ScriptProcessor
+    sample_rate:      16000,
+    channels:         1,
   };
   console.log(`[deepgram:${session.id}] Connecting with config:`, JSON.stringify(dgConfig));
   const conn = deepgram.listen.live(dgConfig);
