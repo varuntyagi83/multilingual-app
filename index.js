@@ -158,8 +158,9 @@ async function startDeepgramStream(session) {
 
   const dgLang = DEEPGRAM_LANG[session.speakerLang] || session.speakerLang;
 
+  // nova-3 is English-only; nova-2 supports es-419, pt-BR, en-US, etc.
   const conn = deepgram.listen.live({
-    model:            'nova-3',
+    model:            'nova-2',
     language:         dgLang,
     smart_format:     true,
     punctuate:        true,
@@ -170,8 +171,22 @@ async function startDeepgramStream(session) {
     // Deepgram auto-detects from the container header
   });
 
-  conn.on(LiveTranscriptionEvents.Open, () => {
-    console.log(`[deepgram:${session.id}] Stream open (${dgLang})`);
+  // Wait for the connection to actually open before returning,
+  // so the caller can safely send 'ready' only when Deepgram is live.
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Deepgram connection timeout after 10s')), 10000);
+
+    conn.on(LiveTranscriptionEvents.Open, () => {
+      clearTimeout(timeout);
+      console.log(`[deepgram:${session.id}] Stream open (${dgLang})`);
+      resolve();
+    });
+
+    conn.on(LiveTranscriptionEvents.Error, (err) => {
+      clearTimeout(timeout);
+      console.error(`[deepgram:${session.id}] Error:`, err);
+      reject(new Error('Deepgram error: ' + JSON.stringify(err)));
+    });
   });
 
   // Interim transcript — send to client for live caption display
@@ -220,7 +235,7 @@ async function startDeepgramStream(session) {
   });
 
   conn.on(LiveTranscriptionEvents.Error, (err) => {
-    console.error(`[deepgram:${session.id}] Error:`, err);
+    console.error(`[deepgram:${session.id}] Post-open error:`, err);
     send(session.ws, { type: 'error', message: 'STT error: ' + JSON.stringify(err) });
   });
 
