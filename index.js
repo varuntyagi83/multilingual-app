@@ -177,7 +177,7 @@ async function startDeepgramStream(session) {
   const dgLang = DEEPGRAM_LANG[session.speakerLang] || session.speakerLang;
 
   // nova-3 is English-only; nova-2 supports es-419, pt-BR, en-US, etc.
-  const conn = deepgram.listen.live({
+  const dgConfig = {
     model:            'nova-2',
     language:         dgLang,
     smart_format:     true,
@@ -187,7 +187,9 @@ async function startDeepgramStream(session) {
     interim_results:  true,
     // No encoding/sample_rate — browser sends audio/webm;codecs=opus,
     // Deepgram auto-detects from the container header
-  });
+  };
+  console.log(`[deepgram:${session.id}] Connecting with config:`, JSON.stringify(dgConfig));
+  const conn = deepgram.listen.live(dgConfig);
 
   // Wait for the connection to actually open before returning,
   // so the caller can safely send 'ready' only when Deepgram is live.
