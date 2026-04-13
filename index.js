@@ -35,9 +35,10 @@ const PORT = process.env.PORT || 3000;
 // ElevenLabs voice IDs tuned for LATAM
 // Replace with your own cloned/licensed voices if needed
 const ELEVENLABS_VOICES = {
-  'es-419': process.env.EL_VOICE_ES || 'imFXYz8XIletRKLZZQaA', // Spanish voice
-  'pt-BR':  process.env.EL_VOICE_PT || 'FGY2WhTYpPnrIDTdsKH5', // Laura   (turbo v2.5 speaks Portuguese)
-  'en-US':  process.env.EL_VOICE_EN || 'EXAVITQu4vr4xnSDxMaL', // Sarah
+  'es-419': process.env.EL_VOICE_ES || 'imFXYz8XIletRKLZZQaA', // Kate 2  (Spanish)
+  'pt-BR':  process.env.EL_VOICE_PT || 'FGY2WhTYpPnrIDTdsKH5', // Laura   (Portuguese)
+  'en-US':  process.env.EL_VOICE_EN || 'EXAVITQu4vr4xnSDxMaL', // Sarah   (English)
+  'de-DE':  process.env.EL_VOICE_DE || 'onwK4e9ZLuTAKqWW03F9', // Daniel  (turbo v2.5 speaks German)
 };
 
 // Deepgram language codes for LATAM
@@ -50,6 +51,7 @@ const DEEPGRAM_LANG = {
   'es-CL':  'es-419',  // Chile
   'es-PE':  'es-419',  // Peru
   'es-MX':  'es-419',  // Mexico
+  'de-DE':  'de',      // German
 };
 
 // ─── Express + HTTP server ────────────────────────────────────────────────────
@@ -437,6 +439,7 @@ const LANG_DISPLAY = {
   'es-MX':  'Mexican Spanish',
   'pt-BR':  'Brazilian Portuguese',
   'en-US':  'English',
+  'de-DE':  'German',
 };
 
 function buildSystemPrompt(speakerLang, targetLang) {
