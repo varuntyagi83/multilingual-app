@@ -63,6 +63,22 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));
 
 app.get('/voices', (_req, res) => res.json(ELEVENLABS_VOICES));
 
+// Diagnostic: test Deepgram connectivity without a live session
+app.get('/api/test-deepgram', async (_req, res) => {
+  try {
+    const conn = deepgram.listen.live({ model: 'nova-2', language: 'en-US' });
+    const result = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Deepgram connection timeout (5s)')), 5000);
+      conn.on(LiveTranscriptionEvents.Open,  ()  => { clearTimeout(t); conn.finish(); resolve('connected'); });
+      conn.on(LiveTranscriptionEvents.Error, (e) => { clearTimeout(t); reject(new Error(e?.message || e?.toString() || 'unknown Deepgram error')); });
+      conn.on(LiveTranscriptionEvents.Close, ()  => { clearTimeout(t); reject(new Error('Deepgram closed before opening — check DEEPGRAM_API_KEY')); });
+    });
+    res.json({ status: 'ok', deepgram: result });
+  } catch (err) {
+    res.json({ status: 'error', message: err.message });
+  }
+});
+
 // ─── WebSocket server ─────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -174,7 +190,7 @@ async function startDeepgramStream(session) {
   // Wait for the connection to actually open before returning,
   // so the caller can safely send 'ready' only when Deepgram is live.
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Deepgram connection timeout after 10s')), 10000);
+    const timeout = setTimeout(() => reject(new Error('Deepgram connection timeout (5s) — check DEEPGRAM_API_KEY and network')), 5000);
 
     conn.on(LiveTranscriptionEvents.Open, () => {
       clearTimeout(timeout);
@@ -184,8 +200,15 @@ async function startDeepgramStream(session) {
 
     conn.on(LiveTranscriptionEvents.Error, (err) => {
       clearTimeout(timeout);
-      console.error(`[deepgram:${session.id}] Error:`, err);
-      reject(new Error('Deepgram error: ' + JSON.stringify(err)));
+      const msg = err?.message || err?.toString() || 'unknown — likely invalid DEEPGRAM_API_KEY';
+      console.error(`[deepgram:${session.id}] Connection error:`, msg);
+      reject(new Error('Deepgram connection failed: ' + msg));
+    });
+
+    conn.on(LiveTranscriptionEvents.Close, () => {
+      clearTimeout(timeout);
+      console.error(`[deepgram:${session.id}] Closed before open — invalid API key?`);
+      reject(new Error('Deepgram closed before opening — check DEEPGRAM_API_KEY'));
     });
   });
 
